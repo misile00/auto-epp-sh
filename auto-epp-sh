@@ -1,0 +1,107 @@
+#!/bin/sh
+
+CONFIG_FILE="/etc/auto-epp.conf"
+DEFAULT_CONFIG="# see available epp state by running: cat /sys/devices/system/cpu/cpu0/cpufreq/energy_performance_available_preferences
+[Settings]
+epp_state_for_AC=balance_performance
+epp_state_for_BAT=power
+"
+
+check_root() {
+    if [ "$(id -u)" -eq 0 ]; then
+        return
+    else
+        echo "auto-epp must be run with root privileges."
+        exit 1
+    fi
+}
+
+check_driver() {
+    scaling_driver_path="/sys/devices/system/cpu/cpu0/cpufreq/scaling_driver"
+    scaling_driver=$(cat "$scaling_driver_path" 2>/dev/null || true)
+    if [ "$scaling_driver" = "amd-pstate-epp" ]; then
+        return
+    else
+        echo "The system is not running amd-pstate-epp"
+        exit 1
+    fi
+}
+
+read_config() {
+    if [ ! -e "$CONFIG_FILE" ]; then
+        echo "$DEFAULT_CONFIG" > "$CONFIG_FILE"
+    fi
+    epp_state_for_AC=$(grep "epp_state_for_AC" "$CONFIG_FILE" | cut -d'=' -f2)
+    epp_state_for_BAT=$(grep "epp_state_for_BAT" "$CONFIG_FILE" | cut -d'=' -f2)
+}
+
+charging() {
+    power_supply_path="/sys/class/power_supply/"
+    power_supplies=$(ls -1 "$power_supply_path" 2>/dev/null || true)
+    power_supplies=$(echo "$power_supplies" | sort)
+
+    if [ -z "$power_supplies" ]; then
+        return 0
+    fi
+
+    for supply in $power_supplies; do
+        supply_type=$(cat "$power_supply_path/$supply/type" 2>/dev/null || true)
+
+        if [ "$supply_type" = "Mains" ]; then
+            val=$(cat "$power_supply_path/$supply/online" 2>/dev/null || true)
+            if [ "$val" -eq 1 ]; then
+                return 0
+            fi
+        elif [ "$supply_type" = "Battery" ]; then
+            val=$(cat "$power_supply_path/$supply/status" 2>/dev/null || true)
+            if [ "$val" = "Discharging" ]; then
+                return 1
+            fi
+        fi
+    done
+
+    return 0
+}
+
+set_governor() {
+    get_governor_file_path='/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor'
+    cur_governor=$(cat "$get_governor_file_path" 2>/dev/null || true)
+
+    if [ "$cur_governor" != "powersave" ]; then
+        echo "Current governor \"$cur_governor\" is not \"powersave\". Setting governor to \"powersave\""
+
+        # setting governor to powersave
+        cpu_count=$(nproc)
+        for cpu in $(seq 0 $((cpu_count - 1))); do
+            governor_file_path="/sys/devices/system/cpu/cpu$cpu/cpufreq/scaling_governor"
+            echo "powersave" > "$governor_file_path"
+        done
+    fi
+}
+
+set_epp() {
+    epp_value=$1
+    cpu_count=$(nproc)
+    for cpu in $(seq 0 $((cpu_count - 1))); do
+        epp_file_path="/sys/devices/system/cpu/cpu$cpu/cpufreq/energy_performance_preference"
+        echo "$epp_value" > "$epp_file_path"
+    done
+}
+
+main() {
+    check_root
+    check_driver
+    read_config
+    while true; do
+        set_governor
+        if charging; then
+            set_epp "$epp_state_for_AC"
+        else
+            set_epp "$epp_state_for_BAT"
+        fi
+        sleep 2
+    done
+}
+
+main
+
