@@ -13,7 +13,7 @@ fi
 
 # Download the files
 curl -o /usr/local/bin/auto-epp-sh https://raw.githubusercontent.com/misile00/auto-epp-sh/auto-epp-sh
-curl -o /etc/systemd/system/auto-epp-sh.service https://raw.githubusercontent.com/misile00/auto-epp-sh/auto-epp-sh.service
+curl -o /etc/systemd/system/auto-epp-sh.service https://raw.githubusercontent.com/misile00/auto-epp-sh/main/auto-epp-sh.service
 
 # Modify the file to use dash if it is present on the system
 sed -i s@/bin/sh@/bin/dash@g /usr/local/bin/auto-epp-sh
